@@ -1,0 +1,26 @@
+[package]
+name = "ticketto-types"
+version = "0.1.0"
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+ink.workspace = true
+kreivo-apis = { workspace = true, features = ["contract"] }
+fc-traits-listings.workspace = true
+codec.workspace = true
+scale-info.workspace = true
+virto-common.workspace = true
+
+[features]
+default = ["std", "serde"]
+serde = []
+std = [
+  "codec/std",
+  "ink/std",
+  "kreivo-apis/std",
+  "virto-common/std",
+  "scale-info/std"
+]
