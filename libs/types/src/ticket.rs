@@ -15,6 +15,7 @@
 use super::*;
 
 pub mod attributes {
+    pub const ATTENDANCES: [u8; 27] = *b"TICKETTO_TICKET_ATTENDANCES";
     pub const ATTENDANCE_POLICY: [u8; 33] = *b"TICKETTO_TICKET_ATTENDANCE_POLICY";
 }
 

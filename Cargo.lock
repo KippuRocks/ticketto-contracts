@@ -7635,6 +7635,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "ticketto_tickets"
+version = "0.1.0"
+dependencies = [
+ "ink",
+ "ink_e2e",
+ "kreivo-apis",
+ "parity-scale-codec",
+ "scale-info",
+ "ticketto-traits",
+ "ticketto-types",
+ "virto-common",
+]
+
+[[package]]
 name = "time"
 version = "0.3.41"
 source = "registry+https://github.com/rust-lang/crates.io-index"

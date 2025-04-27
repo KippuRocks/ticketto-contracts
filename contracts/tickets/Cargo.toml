@@ -1,0 +1,48 @@
+[package]
+authors = ["The Kippu Authors <contact@kippu.rocks>"]
+description = "Smart contract that allows ticket holders to mark attendances"
+edition = "2021"
+license = "Apache-2.0"
+name = "ticketto_tickets"
+repository = "https://github.com/kippurocks/kippu-contracts.git"
+version = "0.1.0"
+
+[dependencies]
+ink = { version = "5.1.1", default-features = false }
+kreivo-apis = { git = "https://github.com/virto-network/kreivo", branch = "dev", default-features = false, features = [
+  "contract",
+] }
+ticketto-traits = { path = "../../libs/traits", default-features = false }
+ticketto-types = { path = "../../libs/types", default-features = false, features = [
+  "serde",
+] }
+virto-common = { git = "https://github.com/virto-network/kreivo", branch = "dev", default-features = false, features = [
+  "scale",
+  "serde",
+] }
+codec = { package = "parity-scale-codec", version = "3.6.4", default-features = false, features = [
+  "serde",
+] }
+scale-info = { version = "2.11.6", default-features = false, features = [
+  "serde",
+] }
+
+[dev-dependencies]
+ink_e2e = "5.1.1"
+
+[lib]
+path = "src/lib.rs"
+
+[features]
+default = ["std"]
+std = [
+  "ink/std",
+  "kreivo-apis/std",
+  "ticketto-traits/std",
+  "ticketto-types/std",
+  "virto-common/std",
+  "codec/std",
+  "scale-info/std"
+]
+ink-as-dependency = []
+e2e-tests = []

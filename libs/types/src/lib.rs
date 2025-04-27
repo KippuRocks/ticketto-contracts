@@ -48,6 +48,15 @@ pub type EventInfo = (
     Option<TicketRestrictions>,
 );
 
+#[derive(Encode, Decode)]
+pub struct TicketInfo {
+    owner: AccountId,
+    name: EventName,
+    attendance_policy: AttendancePolicy,
+    attendances: Vec<Timestamp>,
+    restrictions: TicketRestrictions,
+}
+
 #[derive(Encode, Decode, TypeInfo)]
 #[allow(clippy::cast_possible_truncation)]
 #[repr(u8)]
@@ -59,6 +68,8 @@ pub enum Error {
     Overflow,
     /// The given `EventId` is not found.
     EventNotFound,
+    /// The given `TicketId` is not found.
+    TicketNotFound,
     /// The caller does not have permissions to mutate the state of
     /// an event or a ticket.
     NoPermission,
@@ -69,6 +80,10 @@ pub enum Error {
     /// The maximum capacity of the event was reached. It is not
     /// possible to issue a new ticket.
     MaxCapacity,
+    /// The ticket is trying to be used outside the times of the event.
+    AttendanceOutOfDates,
+    /// The maximum number of attendances has been excedeed for this ticket.
+    MaxAttendances,
     /// An error occurred on the Kreivo APIs side.
     KreivoApiError(KreivoApisError),
     /// A generic error that cannot be categorized.
