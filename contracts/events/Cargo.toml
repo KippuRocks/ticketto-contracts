@@ -28,7 +28,7 @@ scale-info = { version = "2.11.6", default-features = false, features = [
 ] }
 
 [dev-dependencies]
-ink_e2e = "5.1.1"
+#ink_e2e = "5.1.1"
 
 [lib]
 path = "src/lib.rs"
