@@ -18,5 +18,5 @@ use super::*;
 /// We test if the default constructor does its job.
 #[ink::test]
 fn default_works() {
-    TickettoEvents::default()
+    TickettoEvents::initialize()
 }
