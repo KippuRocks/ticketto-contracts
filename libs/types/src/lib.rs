@@ -20,21 +20,22 @@ mod ticket;
 use codec::{Decode, Encode};
 use scale_info::TypeInfo;
 
-use ink::{env::Environment, prelude::vec::Vec};
 use ink::primitives::AccountId;
+use ink::{env::Environment, prelude::vec::Vec};
 use kreivo_apis::{apis::KreivoApisError, KreivoApiEnvironment};
 pub use virto_common::{
     listings::{InventoryId as EventId, ItemId as TicketId},
     FungibleAssetLocation,
 };
 
-pub use event::attributes as event_attributes;
+pub use event::{attributes as event_attributes, EventState};
 pub use ticket::{attributes as ticket_attributes, TicketRestrictions};
 
 pub type EventName = Vec<u8>;
 pub type EventCapacity = TicketId;
 pub type Balance = <KreivoApiEnvironment as Environment>::Balance;
 pub type Timestamp = <KreivoApiEnvironment as Environment>::Timestamp;
+pub type EventDates = Vec<(Timestamp, Timestamp)>;
 pub type ItemPrice = fc_traits_listings::item::ItemPrice<FungibleAssetLocation, Balance>;
 pub type AttendancePolicy = ticket::AttendancePolicy<Timestamp>;
 
@@ -58,12 +59,13 @@ pub enum Error {
     Overflow,
     /// The given `EventId` is not found.
     EventNotFound,
-    /// The event is not editable anymore, because there are already
-    /// issued tickets.
-    EventNotEditable,
     /// The caller does not have permissions to mutate the state of
     /// an event or a ticket.
     NoPermission,
+    /// This action is not possible to be done until dates are set.
+    DatesNotSet,
+    /// This action is not possible to be done at the current state of the event.
+    InvalidState,
     /// The maximum capacity of the event was reached. It is not
     /// possible to issue a new ticket.
     MaxCapacity,
