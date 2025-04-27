@@ -1,0 +1,33 @@
+[workspace]
+resolver = "2"
+members = ["libs/*", "contracts/*"]
+
+[workspace.package]
+authors = ["The Kippu Authors <contact@kippu.rocks>"]
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/kippurocks/kippu-contracts.git"
+
+[workspace.dependencies]
+codec = { package = "parity-scale-codec", version = "3.7.4", default-features = false, features = [
+  "derive"
+] }
+scale-info = { version = "2.11.6", default-features = false, features = [
+  "derive"
+] }
+
+# Virto/Kreivo
+fc-traits-listings = { git = "https://github.com/virto-network/frame-contrib", default-features = false }
+kreivo-apis = { git = "https://github.com/virto-network/kreivo", branch = "dev", default-features = false, features = [
+  "contract"
+] }
+virto-common = { git = "https://github.com/virto-network/kreivo", branch = "dev", default-features = false }
+
+# Ink
+ink = { version = "5.1.1", default-features = false }
+ink_env = { version = "5.1.1", default-features = false }
+ink_e2e = { version = "5.1.1" }
+
+# Local
+ticketto-traits = { path = "libs/traits", default-features = false }
+ticketto-types = { path = "libs/types", default-features = false }
