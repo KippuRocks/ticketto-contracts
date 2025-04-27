@@ -1,0 +1,23 @@
+[package]
+authors.workspace = true
+description = "Some useful implementable traits and helpers that will ease the building of ticketto contracts"
+edition.workspace = true
+license.workspace = true
+name = "ticketto-traits"
+repository.workspace = true
+version = "0.1.0"
+
+[dependencies]
+kreivo-apis = { workspace = true, features = ["contract"] }
+ink.workspace = true
+ink_env.workspace = true
+ticketto-types.workspace = true
+
+[features]
+default = ["std"]
+std = [
+  "kreivo-apis/std",
+  "ink/std",
+  "ink_env/std",
+  "ticketto-types/std",
+]
