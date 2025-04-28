@@ -110,19 +110,17 @@ mod ticketto_tickets {
                 &ticket_attributes::ATTENDANCES,
                 &attendances,
             )
-        }
+            .map_err(|_| Error::MaxAttendances)
+            .and_then(|b| {
+                self.env().emit_event(TicketAttendance {
+                    event: event_id,
+                    id,
+                    when: now,
+                });
 
-        // #[ink(message, selector = 0xFFFFFFFE)]
-        // pub fn get_ticket_info(&self, event_id: EventId) -> Option<TicketInfo> {
-        //     Some((
-        //         self.get_attribute(&event_id, &event_attributes::ORGANISER)?,
-        //         self.get_attribute(&event_id, &event_attributes::NAME)?,
-        //         self.get_attribute(&event_id, &event_attributes::CAPACITY)?,
-        //         self.get_attribute(&event_id, &event_attributes::TICKET_CLASS)?,
-        //         self.get_attribute(&event_id, &event_attributes::TICKET_PRICE),
-        //         self.get_attribute(&event_id, &event_attributes::TICKET_RESTRICTIONS),
-        //     ))
-        // }
+                Ok(b)
+            })
+        }
     }
 
     impl WithMeteredBalance for TickettoTickets {}
