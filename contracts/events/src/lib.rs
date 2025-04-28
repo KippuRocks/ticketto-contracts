@@ -83,10 +83,12 @@ mod ticketto_events {
             maybe_price: Option<ItemPrice>,
             maybe_restrictions: Option<TicketRestrictions>,
         ) -> Result<(EventId, Balance), Error> {
+            let caller = self.env().caller();
             let event_id = self.get_event_id().ok_or(Error::Overflow)?;
+
             Self::with_metered_balance(&mut self.env(), &event_id, || {
-                let caller = self.env().caller();
                 <KreivoApi as KreivoAPI<_>>::Listings::create(&self.env(), &event_id)?;
+
                 <KreivoApi as KreivoAPI<_>>::Listings::inventory_set_attribute(
                     &self.env(),
                     &event_id,
@@ -119,7 +121,6 @@ mod ticketto_events {
                         &price,
                     )?;
                 }
-
                 if let Some(ticket_restrictions) = maybe_restrictions {
                     <KreivoApi as KreivoAPI<_>>::Listings::inventory_set_attribute(
                         &self.env(),
@@ -140,7 +141,7 @@ mod ticketto_events {
 
         /// Edits the name of the event.
         ///
-        /// The method fails if the event is ongoing or finished.
+        /// The method fails if the event tickets are already on sale.
         #[ink(message, payable, selector = 0x02)]
         pub fn set_event_name(
             &mut self,
@@ -148,9 +149,7 @@ mod ticketto_events {
             name: EventName,
         ) -> Result<Balance, Error> {
             self.ensure_organiser(&event_id)?;
-            self.with_state(&event_id, |state| {
-                !matches!(state, EventState::Ongoing | EventState::Finished)
-            })?;
+            self.with_state(&event_id, |state| state == EventState::Created)?;
             self.set_attribute(&event_id, &event_attributes::NAME, &name)
         }
 
@@ -164,8 +163,8 @@ mod ticketto_events {
             capacity: EventCapacity,
         ) -> Result<Balance, Error> {
             self.ensure_organiser(&event_id)?;
-            self.with_state(&event_id, |state| matches!(state, EventState::Created))?;
-            self.set_attribute(&event_id, &event_attributes::TICKET_CLASS, &capacity)
+            self.with_state(&event_id, |state| state == EventState::Created)?;
+            self.set_attribute(&event_id, &event_attributes::CAPACITY, &capacity)
         }
 
         /// Edits the class of the ticket.
@@ -178,7 +177,7 @@ mod ticketto_events {
             ticket_class: AttendancePolicy,
         ) -> Result<Balance, Error> {
             self.ensure_organiser(&event_id)?;
-            self.with_state(&event_id, |state| matches!(state, EventState::Created))?;
+            self.with_state(&event_id, |state| state == EventState::Created)?;
             self.set_attribute(&event_id, &event_attributes::TICKET_CLASS, &ticket_class)
         }
 
@@ -191,7 +190,7 @@ mod ticketto_events {
             self.with_state(&event_id, |state| {
                 matches!(state, EventState::Created | EventState::Sales)
             })?;
-            self.set_attribute(&event_id, &event_attributes::TICKET_CLASS, &price)
+            self.set_attribute(&event_id, &event_attributes::TICKET_PRICE, &price)
         }
 
         /// Edits the restrictions of the ticket.
@@ -204,10 +203,10 @@ mod ticketto_events {
             ticket_restrictions: TicketRestrictions,
         ) -> Result<Balance, Error> {
             self.ensure_organiser(&event_id)?;
-            self.with_state(&event_id, |state| matches!(state, EventState::Created))?;
+            self.with_state(&event_id, |state| state == EventState::Created)?;
             self.set_attribute(
                 &event_id,
-                &event_attributes::TICKET_CLASS,
+                &event_attributes::TICKET_RESTRICTIONS,
                 &ticket_restrictions,
             )
         }
@@ -224,7 +223,7 @@ mod ticketto_events {
             Self::with_metered_balance(&mut self.env(), &event_id, || {
                 self.ensure_organiser(&event_id)?;
                 self.with_state(&event_id, |state| {
-                    !matches!(state, EventState::Ongoing | EventState::Finished)
+                    matches!(state, EventState::Created | EventState::Sales)
                 })?;
                 self.set_attribute(&event_id, &event_attributes::DATES, &dates)
             })
@@ -241,12 +240,9 @@ mod ticketto_events {
                 )
                 .unwrap_or_default();
 
-                let dates: EventDates = <KreivoApi as KreivoAPI<_>>::Listings::inventory_attribute(
-                    &self.env(),
-                    &event_id,
-                    &event_attributes::STATE,
-                )
-                .ok_or(Error::DatesNotSet)?;
+                let dates: EventDates = self
+                    .get_attribute(&event_id, &event_attributes::DATES)
+                    .ok_or(Error::DatesNotSet)?;
 
                 let next_state = match state {
                     EventState::Created => {
@@ -290,11 +286,12 @@ mod ticketto_events {
         #[ink(message, payable, selector = 0x10)]
         pub fn issue_ticket(&mut self, event_id: EventId) -> Result<Balance, Error> {
             Self::with_metered_balance(&mut self.env(), &event_id, || {
+                let (organiser, name, capacity, attendance_policy, maybe_price, maybe_restrictions) =
+                    self.get_event_info(event_id).ok_or(Error::EventNotFound)?;
 				self.with_state(&event_id, |state| {
-					!matches!(state, EventState::Sales | EventState::Ongoing)
+					matches!(state, EventState::Sales | EventState::Ongoing)
 				})?;
-				let (organiser, name, capacity, attendance_policy, maybe_price, maybe_restrictions) =
-					self.get_event_info(event_id).ok_or(Error::EventNotFound)?;
+
 				let ticket_id = self.get_ticket_id(&event_id)?;
 
 				(ticket_id < capacity)
@@ -361,13 +358,9 @@ mod ticketto_events {
         #[ink(message, payable, selector = 0xFFFFFFFF)]
         pub fn deposit(&mut self, event_id: EventId) -> Result<(), Error> {
             Self::with_metered_balance(&mut self.env(), &event_id, || {
-                <KreivoApi as KreivoAPI<_>>::Listings::inventory_attribute::<_, AccountId>(
-                    &self.env(),
-                    &event_id,
-                    &event_attributes::ORGANISER,
-                )
-                .map(|_| ())
-                .ok_or(Error::EventNotFound)
+                <KreivoApi as KreivoAPI<_>>::Listings::inventory_exists(&self.env(), &event_id)
+                    .then_some(())
+                    .ok_or(Error::EventNotFound)
             })
             .map(|_| ())
         }
