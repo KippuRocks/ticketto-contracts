@@ -14,11 +14,20 @@
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
-use ink::EnvAccess;
+use ink::{
+    codegen::StaticEnv,
+    scale::{Decode, Encode},
+    EnvAccess,
+};
 use ink_env::Environment;
-use kreivo_apis::apis::{KreivoAPI, ListingsInventoriesAPI};
-use kreivo_apis::{KreivoApi, KreivoApiEnvironment};
-use ticketto_types::{event_attributes, Error, EventId};
+use kreivo_apis::{
+    apis::{KreivoAPI, ListingsInventoriesAPI, ListingsItemsAPI},
+    KreivoApi, KreivoApiEnvironment,
+};
+use ticketto_types::{
+    Error, EventAttribute, EventId, EventInfo, EventState, TicketId, TickettoAttribute,
+    DEFAULT_CLASS,
+};
 
 type Balance = <KreivoApiEnvironment as Environment>::Balance;
 
@@ -28,27 +37,31 @@ type Balance = <KreivoApiEnvironment as Environment>::Balance;
 /// enough to cover for the costs.
 ///
 /// This is to ensure that no event organiser would be subsidising another event's costs.
-pub trait WithMeteredBalance {
+pub trait WithMeteredBalance:
+    StaticEnv<EnvAccess = EnvAccess<'static, KreivoApiEnvironment>>
+{
     /// Measures the changes in balance, and enforces the execution doesn't incur in
     /// [`LowBalance`][Error::LowBalance].
     fn with_metered_balance<R>(
-        env: &mut EnvAccess<KreivoApiEnvironment>,
+        &self,
         event_id: &EventId,
         f: impl FnOnce() -> Result<R, Error>,
     ) -> Result<(R, Balance), Error> {
-        let pre_balance = env.clone().balance();
-        let transferred_value = env.clone().transferred_value();
+        let key_deposit_balance = ("TICKETTO_ATTR", EventAttribute::DepositBalance);
+
+        let pre_balance = Self::env().balance();
+        let transferred_value = Self::env().transferred_value();
 
         let event_balance: Balance = <KreivoApi as KreivoAPI<_>>::Listings::inventory_attribute(
-            env,
+            &Self::env(),
             event_id,
-            &event_attributes::DEPOSIT_BALANCE,
+            &key_deposit_balance,
         )
         .unwrap_or_default();
 
         let r = f()?;
 
-        let post_balance = env.clone().balance();
+        let post_balance = Self::env().balance();
 
         // No balance was spent, or even some balance was released. Also, some balance may have
         // been provided.
@@ -58,9 +71,9 @@ pub trait WithMeteredBalance {
                 .ok_or(Error::LowBalance)?;
 
             <KreivoApi as KreivoAPI<_>>::Listings::inventory_set_attribute(
-                env,
+                &Self::env(),
                 event_id,
-                &event_attributes::DEPOSIT_BALANCE,
+                &key_deposit_balance,
                 &event_balance
                     .checked_add(transferred_value)
                     .ok_or(Error::Overflow)?
@@ -75,9 +88,9 @@ pub trait WithMeteredBalance {
                 .ok_or(Error::LowBalance)?;
 
             <KreivoApi as KreivoAPI<_>>::Listings::inventory_set_attribute(
-                env,
+                &Self::env(),
                 event_id,
-                &event_attributes::DEPOSIT_BALANCE,
+                &key_deposit_balance,
                 &event_balance
                     .checked_add(transferred_value)
                     .ok_or(Error::Overflow)?
@@ -90,4 +103,104 @@ pub trait WithMeteredBalance {
 
         Ok((r, difference))
     }
+}
+
+pub trait WithAttributes: StaticEnv<EnvAccess = EnvAccess<'static, KreivoApiEnvironment>> {
+    fn key(attribute: impl Into<TickettoAttribute>) -> impl Encode {
+        let attr: TickettoAttribute = attribute.into();
+        (b"TICKETTO_ATTRIBUTE", attr)
+    }
+
+    fn get_attribute<V: Encode + Decode>(
+        &self,
+        event_id: &EventId,
+        ticket_id: Option<&TicketId>,
+        key: impl Into<TickettoAttribute>,
+    ) -> Option<V> {
+        if let Some(id) = ticket_id {
+            <KreivoApi as KreivoAPI<_>>::Listings::item_attribute(
+                &Self::env(),
+                event_id,
+                id,
+                &Self::key(key),
+            )
+        } else {
+            <KreivoApi as KreivoAPI<_>>::Listings::inventory_attribute(
+                &Self::env(),
+                event_id,
+                &Self::key(key),
+            )
+        }
+    }
+
+    fn set_attribute<V: Encode + Decode>(
+        &self,
+        event_id: &EventId,
+        ticket_id: Option<&TicketId>,
+        key: impl Into<TickettoAttribute>,
+        value: &V,
+    ) -> Result<(), Error> {
+        if let Some(id) = ticket_id {
+            <KreivoApi as KreivoAPI<_>>::Listings::item_set_attribute(
+                &Self::env(),
+                event_id,
+                id,
+                &Self::key(key),
+                value,
+            )
+        } else {
+            <KreivoApi as KreivoAPI<_>>::Listings::inventory_set_attribute(
+                &Self::env(),
+                event_id,
+                &Self::key(key),
+                value,
+            )
+        }
+        .map_err(|e| e.into())
+    }
+}
+
+pub trait WithState: WithAttributes {
+    fn with_state<R>(&self, event_id: &EventId, f: impl FnOnce(EventState) -> R) -> R {
+        let state: EventState = self
+            .get_attribute(event_id, None, EventAttribute::State)
+            .unwrap_or_default();
+        f(state)
+    }
+
+    fn ensure_state(
+        &self,
+        event_id: &EventId,
+        f: impl FnOnce(EventState) -> bool,
+    ) -> Result<(), Error> {
+        self.with_state(event_id, |state| {
+            f(state).then_some(()).ok_or(Error::InvalidState)
+        })
+    }
+}
+
+pub trait GetEventInfo: WithAttributes {
+    fn get_event_info(&self, event_id: &EventId) -> Option<EventInfo> {
+        Some(EventInfo {
+            organiser: self.get_attribute(event_id, None, EventAttribute::Organiser)?,
+            name: self.get_attribute(event_id, None, EventAttribute::Name)?,
+            state: self.get_attribute(event_id, None, EventAttribute::State)?,
+            capacity: self.get_attribute(event_id, None, EventAttribute::Capacity)?,
+            class: self.get_attribute(
+                event_id,
+                None,
+                EventAttribute::TicketClass(DEFAULT_CLASS.into()),
+            )?,
+            dates: self.get_attribute(event_id, None, EventAttribute::Dates)?,
+        })
+    }
+}
+
+#[macro_export]
+macro_rules! ensure {
+    ($cond:expr, $err:expr $(,)?) => {
+        if !$cond {
+            return Err($err.into()); // Into<E> lets callers use their own error type
+        }
+    };
 }
