@@ -14,12 +14,23 @@
 
 use super::*;
 
-pub mod attributes {
-    pub const ATTENDANCES: [u8; 27] = *b"TICKETTO_TICKET_ATTENDANCES";
-    pub const ATTENDANCE_POLICY: [u8; 33] = *b"TICKETTO_TICKET_ATTENDANCE_POLICY";
+#[derive(Encode, Decode, Debug, Clone, PartialEq)]
+pub struct TicketInfo {
+    owner: AccountId,
+    name: EventName,
+    attendance_policy: crate::AttendancePolicy,
+    attendances: Vec<Timestamp>,
+    restrictions: TicketRestrictions,
 }
 
-#[derive(Default, Encode, Decode, TypeInfo)]
+
+#[derive(Default, Encode, Decode, TypeInfo, Debug, Clone, PartialEq, Eq)]
+pub struct Attendances {
+    pub count: u32,
+    pub last: Timestamp,
+}
+
+#[derive(Default, Encode, Decode, TypeInfo, Debug, Clone, PartialEq, Eq)]
 pub struct TicketRestrictions {
     pub cannot_resale: bool,
     pub cannot_transfer: bool,
@@ -27,7 +38,7 @@ pub struct TicketRestrictions {
 
 #[allow(clippy::cast_possible_truncation)]
 #[repr(u8)]
-#[derive(Default, Encode, Decode, TypeInfo)]
+#[derive(Default, Encode, Decode, TypeInfo, Debug, Clone, PartialEq, Eq)]
 pub enum AttendancePolicy<Timestamp> {
     #[default]
     Single,
