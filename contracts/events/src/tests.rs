@@ -15,8 +15,9 @@
 /// Imports all the definitions from the outer scope so we can use them here.
 use super::*;
 
+
 /// We test if the default constructor does its job.
 #[ink::test]
 fn default_works() {
-    TickettoEvents::initialize()
+    TickettoEvents::new()
 }

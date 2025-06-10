@@ -21,18 +21,16 @@ mod tests;
 
 #[ink::contract(env = KreivoApiEnvironment)]
 mod ticketto_events {
-    use codec::{Decode, Encode};
     use ink::codegen::Env;
+    use scale_info::prelude::vec::Vec;
+
     pub use kreivo_apis::{
         apis::{KreivoAPI, ListingsInventoriesAPI, ListingsItemsAPI},
         KreivoApi, KreivoApiEnvironment,
     };
-    use ticketto_traits::WithMeteredBalance;
-    pub use ticketto_types::{
-        event_attributes, ticket_attributes, AttendancePolicy, Error, EventCapacity, EventId,
-        EventInfo, EventName, ItemPrice, TicketId, TicketRestrictions,
-    };
-    use ticketto_types::{EventDates, EventState};
+    use ticketto_traits::*;
+    pub use ticketto_types::*;
+
     /// Allows organisers to manage their events.
     ///
     /// This implementation of `Ticketto` heavily rely upon the Kreivo APIs. This means we'll use
@@ -56,78 +54,67 @@ mod ticketto_events {
         organiser: AccountId,
     }
 
-    /// Emits when a ticket is issued.
-    #[ink(event)]
-    pub struct TicketIssued {
-        event: EventId,
-        id: TicketId,
-    }
+    impl WithMeteredBalance for TickettoEvents {}
+    impl WithAttributes for TickettoEvents {}
+    impl WithState for TickettoEvents {}
+    impl GetEventInfo for TickettoEvents {}
 
+    // Calls
     impl TickettoEvents {
-        /// Default constructor.
-        #[ink(constructor, selector = 0x00)]
-        pub fn initialize() -> Self {
+        /// Initialize the contract.
+        #[ink(constructor, selector = 0xFFFFFFFF)]
+        pub fn new() -> Self {
             Default::default()
+        }
+
+        /// A permissionless method, that allows anyone to cover the deposit account of the event.
+        /// Fails if the given event does not exist.
+        ///
+        /// It is expected to have a zero difference, because it's a no-op (in storage terms).
+        #[ink(message, payable, selector = 0xFFFFFFFE)]
+        pub fn deposit(&mut self, event_id: EventId) -> Result<(), Error> {
+            <KreivoApi as KreivoAPI<_>>::Listings::inventory_exists(&self.env(), &event_id)
+                .then_some(())
+                .ok_or(Error::EventNotFound)
         }
 
         /// Creates a new inventory for storing the event (and its details).
         ///
         /// The caller must assume the storage cost to create a new event, otherwise, a
-        /// [`Deposit`][Error::Deposit] error will be thrown.
-        #[ink(message, payable, selector = 0x01)]
+        /// [`LowBalance`][Error::LowBalance] error will be thrown.
+        #[ink(message, payable)]
         pub fn create_event(
             &mut self,
             name: EventName,
             capacity: EventCapacity,
-            class: AttendancePolicy,
-            maybe_price: Option<ItemPrice>,
-            maybe_restrictions: Option<TicketRestrictions>,
+            ticket_class: TicketClass,
+            maybe_dates: Option<EventDates>,
+            maybe_metadata: Option<Vec<u8>>,
         ) -> Result<(EventId, Balance), Error> {
+            let state = &EventState::Created;
             let caller = self.env().caller();
             let event_id = self.get_event_id().ok_or(Error::Overflow)?;
 
-            Self::with_metered_balance(&mut self.env(), &event_id, || {
+            self.with_metered_balance(&event_id, || {
+                // Create a new event.
                 <KreivoApi as KreivoAPI<_>>::Listings::create(&self.env(), &event_id)?;
 
-                <KreivoApi as KreivoAPI<_>>::Listings::inventory_set_attribute(
-                    &self.env(),
-                    &event_id,
-                    &event_attributes::ORGANISER,
-                    &caller,
-                )?;
-                <KreivoApi as KreivoAPI<_>>::Listings::inventory_set_attribute(
-                    &self.env(),
-                    &event_id,
-                    &event_attributes::NAME,
-                    &name,
-                )?;
-                <KreivoApi as KreivoAPI<_>>::Listings::inventory_set_attribute(
-                    &self.env(),
-                    &event_id,
-                    &event_attributes::CAPACITY,
-                    &capacity,
-                )?;
-                <KreivoApi as KreivoAPI<_>>::Listings::inventory_set_attribute(
-                    &self.env(),
-                    &event_id,
-                    &event_attributes::TICKET_CLASS,
-                    &class,
-                )?;
-                if let Some(price) = maybe_price {
-                    <KreivoApi as KreivoAPI<_>>::Listings::inventory_set_attribute(
-                        &self.env(),
-                        &event_id,
-                        &event_attributes::TICKET_PRICE,
-                        &price,
-                    )?;
+                // Sets the event organiser.
+                self.set_attribute(&event_id, None, EventAttribute::Organiser, &caller)?;
+
+                // Adds attributes to the event.
+                self.set_name(&event_id, state, &name)?;
+                self.set_capacity(&event_id, state, &capacity)?;
+                self.set_ticket_class(&event_id, state, &ticket_class)?;
+
+                // If given, sets the dates to the event.
+                if let Some(dates) = &maybe_dates {
+                    self.set_event_dates(&event_id, state, dates)?;
                 }
-                if let Some(ticket_restrictions) = maybe_restrictions {
-                    <KreivoApi as KreivoAPI<_>>::Listings::inventory_set_attribute(
-                        &self.env(),
-                        &event_id,
-                        &event_attributes::TICKET_RESTRICTIONS,
-                        &ticket_restrictions,
-                    )?;
+
+                // If given, sets a reference to the metadata of the event.
+                if let Some(metadata) = &maybe_metadata {
+                    self.set_event_metadata(&event_id, state, metadata)?;
                 }
 
                 self.env().emit_event(EventRegistered {
@@ -139,246 +126,96 @@ mod ticketto_events {
             })
         }
 
-        /// Edits the name of the event.
-        ///
-        /// The method fails if the event tickets are already on sale.
-        #[ink(message, payable, selector = 0x02)]
-        pub fn set_event_name(
-            &mut self,
+        #[ink(message, payable)]
+        pub fn update(
+            &self,
             event_id: EventId,
-            name: EventName,
+            maybe_name: Option<EventName>,
+            maybe_capacity: Option<EventCapacity>,
+            maybe_ticket_class: Option<TicketClass>,
+            maybe_dates: Option<EventDates>,
+            maybe_metadata: Option<Vec<u8>>,
         ) -> Result<Balance, Error> {
             self.ensure_organiser(&event_id)?;
-            self.with_state(&event_id, |state| state == EventState::Created)?;
-            self.set_attribute(&event_id, &event_attributes::NAME, &name)
-        }
 
-        /// Edits the capacity of the event.
-        ///
-        /// The method fails if the event tickets are already on sale.
-        #[ink(message, payable, selector = 0x03)]
-        pub fn set_capacity(
-            &mut self,
-            event_id: EventId,
-            capacity: EventCapacity,
-        ) -> Result<Balance, Error> {
-            self.ensure_organiser(&event_id)?;
-            self.with_state(&event_id, |state| state == EventState::Created)?;
-            self.set_attribute(&event_id, &event_attributes::CAPACITY, &capacity)
-        }
+            self.with_metered_balance(&event_id, || {
+                self.with_state(&event_id, |ref state| {
+                    if let Some(name) = maybe_name {
+                        self.set_name(&event_id, state, &name)?;
+                    }
 
-        /// Edits the class of the ticket.
-        ///
-        /// The method fails if the event tickets are already on sale.
-        #[ink(message, payable, selector = 0x04)]
-        pub fn set_ticket_class(
-            &mut self,
-            event_id: EventId,
-            ticket_class: AttendancePolicy,
-        ) -> Result<Balance, Error> {
-            self.ensure_organiser(&event_id)?;
-            self.with_state(&event_id, |state| state == EventState::Created)?;
-            self.set_attribute(&event_id, &event_attributes::TICKET_CLASS, &ticket_class)
-        }
+                    if let Some(capacity) = maybe_capacity {
+                        self.set_capacity(&event_id, state, &capacity)?;
+                    }
 
-        /// Edits the price of the ticket.
-        ///
-        /// The method fails if the event is ongoing or finished.
-        #[ink(message, payable, selector = 0x05)]
-        pub fn set_price(&mut self, event_id: EventId, price: ItemPrice) -> Result<Balance, Error> {
-            self.ensure_organiser(&event_id)?;
-            self.with_state(&event_id, |state| {
-                matches!(state, EventState::Created | EventState::Sales)
-            })?;
-            self.set_attribute(&event_id, &event_attributes::TICKET_PRICE, &price)
-        }
+                    if let Some(ticket_class) = maybe_ticket_class {
+                        self.set_ticket_class(&event_id, state, &ticket_class)?;
+                    }
 
-        /// Edits the restrictions of the ticket.
-        ///
-        /// The method fails if the event tickets are already on sale.
-        #[ink(message, payable, selector = 0x06)]
-        pub fn set_ticket_restrictions(
-            &mut self,
-            event_id: EventId,
-            ticket_restrictions: TicketRestrictions,
-        ) -> Result<Balance, Error> {
-            self.ensure_organiser(&event_id)?;
-            self.with_state(&event_id, |state| state == EventState::Created)?;
-            self.set_attribute(
-                &event_id,
-                &event_attributes::TICKET_RESTRICTIONS,
-                &ticket_restrictions,
-            )
-        }
+                    if let Some(dates) = &maybe_dates {
+                        self.set_event_dates(&event_id, state, dates)?;
+                    }
 
-        /// Sets the dates of the event.
-        ///
-        /// The method fails if the event is ongoing or finished.
-        #[ink(message, payable, selector = 0x07)]
-        pub fn set_event_dates(
-            &mut self,
-            event_id: EventId,
-            dates: EventDates,
-        ) -> Result<Balance, Error> {
-            Self::with_metered_balance(&mut self.env(), &event_id, || {
-                self.ensure_organiser(&event_id)?;
-                self.with_state(&event_id, |state| {
-                    matches!(state, EventState::Created | EventState::Sales)
-                })?;
-                self.set_attribute(&event_id, &event_attributes::DATES, &dates)
+                    if let Some(metadata) = &maybe_metadata {
+                        self.set_event_metadata(&event_id, state, metadata)?;
+                    }
+
+                    Ok(())
+                })
             })
-            .map(|(_, r)| r)
+            .map(|(_, b)| b)
         }
 
-        #[ink(message, payable, selector = 0x08)]
+        #[ink(message, payable)]
         pub fn bump_state(&mut self, event_id: EventId) -> Result<Balance, Error> {
-            Self::with_metered_balance(&mut self.env(), &event_id, || {
-                let state: EventState = <KreivoApi as KreivoAPI<_>>::Listings::inventory_attribute(
-                    &self.env(),
-                    &event_id,
-                    &event_attributes::STATE,
-                )
-                .unwrap_or_default();
+            self.with_metered_balance(&event_id, || {
+                self.with_state(&event_id, |ref state| {
+                    let dates: EventDates = self
+                        .get_attribute(&event_id, None, EventAttribute::Dates)
+                        .ok_or(Error::DatesNotSet)?;
 
-                let dates: EventDates = self
-                    .get_attribute(&event_id, &event_attributes::DATES)
-                    .ok_or(Error::DatesNotSet)?;
+                    let next_state = match state {
+                        EventState::Created => {
+                            // Only the organiser can bump to sales, once some dates have been set.
+                            self.ensure_organiser(&event_id)?;
+                            EventState::Sales
+                        }
+                        EventState::Sales => {
+                            // Anyone can bump to ongoing, as long as the first date has been reached.
+                            let (starts, _) = dates.first().ok_or(Error::DatesNotSet)?;
+                            (starts <= &self.env().block_timestamp())
+                                .then_some(())
+                                .ok_or(Error::InvalidState)?;
+                            EventState::Ongoing
+                        }
+                        // Anyone can bump to finished, as long as the last date has passed.
+                        EventState::Ongoing => {
+                            let (_, ends) = dates.last().ok_or(Error::DatesNotSet)?;
+                            (ends <= &self.env().block_timestamp())
+                                .then_some(())
+                                .ok_or(Error::InvalidState)?;
+                            EventState::Finished
+                        }
+                        // This is the last state, so it's final. Errors to prevent redundant
+                        // overwriting and resources exhaustion.
+                        EventState::Finished => Err(Error::InvalidState)?,
+                    };
 
-                let next_state = match state {
-                    EventState::Created => {
-                        // Only the organiser can bump to sales, once some dates have been set.
-                        self.ensure_organiser(&event_id)?;
-                        EventState::Sales
-                    }
-                    EventState::Sales => {
-                        // Anyone can bump to ongoing, as long as the first date has been reached.
-                        let (starts, _) = dates.first().ok_or(Error::DatesNotSet)?;
-                        (starts <= &self.env().block_timestamp())
-                            .then_some(())
-                            .ok_or(Error::InvalidState)?;
-                        EventState::Ongoing
-                    }
-                    // Anyone can bump to finished, as long as the last date has passed.
-                    EventState::Ongoing => {
-                        let (_, ends) = dates.last().ok_or(Error::DatesNotSet)?;
-                        (ends <= &self.env().block_timestamp())
-                            .then_some(())
-                            .ok_or(Error::InvalidState)?;
-                        EventState::Finished
-                    }
-                    // This is the last state, so it's final. Errors to prevent redundant
-                    // overwriting and resources exhaustion.
-                    EventState::Finished => Err(Error::InvalidState)?,
-                };
-
-                self.set_attribute(&event_id, &event_attributes::STATE, &next_state)?;
-                Ok(())
+                    self.set_attribute(&event_id, None, EventAttribute::State, &next_state)?;
+                    Ok(())
+                })
             })
-            .map(|(_, r)| r)
-        }
-
-        /// Permissionlessly issues a new ticket. The new ticket takes the parameters given by the
-        /// `EventInfo`. Tickets can only be issued on the [`Sales`][EventState::Sales] and
-        /// [`Ongoing`][EventState::Ongoing] period, until maximum capacity is reached.
-        ///
-        /// Once the event finishes, or the maximum capacity is reached, it won't be longer possible
-        /// to issue more tickets.
-        #[ink(message, payable, selector = 0x10)]
-        pub fn issue_ticket(&mut self, event_id: EventId) -> Result<Balance, Error> {
-            Self::with_metered_balance(&mut self.env(), &event_id, || {
-                let (organiser, name, capacity, attendance_policy, maybe_price, maybe_restrictions) =
-                    self.get_event_info(event_id).ok_or(Error::EventNotFound)?;
-				self.with_state(&event_id, |state| {
-					matches!(state, EventState::Sales | EventState::Ongoing)
-				})?;
-
-				let ticket_id = self.get_ticket_id(&event_id)?;
-
-				(ticket_id < capacity)
-					.then_some(())
-					.ok_or(Error::MaxCapacity)?;
-
-				<KreivoApi as KreivoAPI<_>>::Listings::publish(
-					&self.env(),
-					&event_id,
-					&ticket_id,
-					name,
-					maybe_price,
-				)?;
-				<KreivoApi as KreivoAPI<_>>::Listings::item_set_attribute(
-					&self.env(),
-					&event_id,
-					&ticket_id,
-					&ticket_attributes::ATTENDANCE_POLICY,
-					&attendance_policy,
-				)?;
-
-				if let Some(restrictions) = maybe_restrictions {
-					if restrictions.cannot_resale {
-						<KreivoApi as KreivoAPI<_>>::Listings::item_disable_resell(
-							&self.env(),
-							&event_id,
-							&ticket_id,
-						)?;
-					}
-
-					if restrictions.cannot_transfer {
-						<KreivoApi as KreivoAPI<_>>::Listings::item_disable_transfer(
-							&self.env(),
-							&event_id,
-							&ticket_id,
-						)?;
-					}
-				}
-
-				// We transfer the ownership of the ticket to the event organiser.
-				// This makes possible for the organiser to get the earnings of a ticket once
-				// sold via the `Orders` pallet.
-				<KreivoApi as KreivoAPI<_>>::Listings::item_creator_transfer(
-					&self.env(),
-					&event_id,
-					&ticket_id,
-					&organiser,
-				)?;
-
-				self.env().emit_event(TicketIssued {
-					event: event_id,
-					id: ticket_id,
-				});
-
-				Ok(())
-			})
-				.map(|(_, r)| r)
-        }
-
-        /// A permissionless method, that allows anyone to cover the deposit account of the event.
-        /// Fails if the given event does not exist.
-        ///
-        /// It is expected to have a zero difference, because it's a no-op (in storage terms).
-        #[ink(message, payable, selector = 0xFFFFFFFF)]
-        pub fn deposit(&mut self, event_id: EventId) -> Result<(), Error> {
-            Self::with_metered_balance(&mut self.env(), &event_id, || {
-                <KreivoApi as KreivoAPI<_>>::Listings::inventory_exists(&self.env(), &event_id)
-                    .then_some(())
-                    .ok_or(Error::EventNotFound)
-            })
-            .map(|_| ())
-        }
-
-        #[ink(message, selector = 0xFFFFFFFE)]
-        pub fn get_event_info(&self, event_id: EventId) -> Option<EventInfo> {
-            Some((
-                self.get_attribute(&event_id, &event_attributes::ORGANISER)?,
-                self.get_attribute(&event_id, &event_attributes::NAME)?,
-                self.get_attribute(&event_id, &event_attributes::CAPACITY)?,
-                self.get_attribute(&event_id, &event_attributes::TICKET_CLASS)?,
-                self.get_attribute(&event_id, &event_attributes::TICKET_PRICE),
-                self.get_attribute(&event_id, &event_attributes::TICKET_RESTRICTIONS),
-            ))
+            .map(|(_, b)| b)
         }
     }
 
-    impl WithMeteredBalance for TickettoEvents {}
+    // Storage
+    impl TickettoEvents {
+        #[ink(message)]
+        pub fn get(&self, event_id: EventId) -> Option<EventInfo> {
+            self.get_event_info(&event_id)
+        }
+    }
 
     impl TickettoEvents {
         fn get_event_id(&mut self) -> Option<EventId> {
@@ -387,81 +224,96 @@ mod ticketto_events {
             Some(event_id)
         }
 
-        fn get_ticket_id(&self, event_id: &EventId) -> Result<TicketId, Error> {
-            let next_ticket_id: TicketId =
-                <KreivoApi as KreivoAPI<_>>::Listings::inventory_attribute(
-                    &self.env(),
-                    event_id,
-                    &event_attributes::NEXT_TICKET_ID,
-                )
-                .unwrap_or_default();
-            <KreivoApi as KreivoAPI<_>>::Listings::inventory_set_attribute(
-                &self.env(),
-                event_id,
-                &event_attributes::NEXT_TICKET_ID,
-                &next_ticket_id.checked_add(1).ok_or(Error::Overflow)?,
-            )
-            .unwrap_or_default();
-            Ok(next_ticket_id)
-        }
-
         fn ensure_organiser(&self, event_id: &EventId) -> Result<(), Error> {
-            let event_organiser: ink::primitives::AccountId =
-                <KreivoApi as KreivoAPI<_>>::Listings::inventory_attribute(
-                    &self.env(),
-                    event_id,
-                    &event_attributes::ORGANISER,
-                )
+            let event_organiser: ink::primitives::AccountId = self
+                .get_attribute(event_id, None, EventAttribute::Organiser)
                 .ok_or(Error::EventNotFound)?;
+
             // Ensure the caller is the event organiser.
             (event_organiser == self.env().caller())
                 .then_some(())
                 .ok_or(Error::NoPermission)
         }
 
-        fn get_attribute<K: Encode, V: Encode + Decode>(
+        /// Edits the name of the event.
+        ///
+        /// The method fails if the event tickets are already on sale.
+        fn set_name(
             &self,
             event_id: &EventId,
-            attribute: &K,
-        ) -> Option<V> {
-            <KreivoApi as KreivoAPI<_>>::Listings::inventory_attribute(
-                &self.env(),
-                event_id,
-                attribute,
-            )
-        }
-
-        fn with_state(
-            &self,
-            event_id: &EventId,
-            f: impl FnOnce(EventState) -> bool,
+            state: &EventState,
+            name: &EventName,
         ) -> Result<(), Error> {
-            let state: EventState = <KreivoApi as KreivoAPI<_>>::Listings::inventory_attribute(
-                &self.env(),
-                event_id,
-                &event_attributes::STATE,
-            )
-            .unwrap_or_default();
-
-            f(state).then_some(()).ok_or(Error::InvalidState)
+            ensure!(*state == EventState::Created, Error::InvalidState);
+            self.set_attribute(event_id, None, EventAttribute::Name, name)
         }
 
-        fn set_attribute<K: Encode, V: Encode>(
+        /// Edits the capacity of the event.
+        ///
+        /// The method fails if the event tickets are already on sale.
+        fn set_capacity(
             &self,
             event_id: &EventId,
-            attribute: &K,
-            value: &V,
-        ) -> Result<Balance, Error> {
-            Self::with_metered_balance(&mut self.env(), event_id, || {
-                <KreivoApi as KreivoAPI<_>>::Listings::inventory_set_attribute(
-                    &self.env(),
-                    event_id,
-                    attribute,
-                    value,
-                )?;
-                Ok(())
-            })
-            .map(|(_, r)| r)
+            state: &EventState,
+            capacity: &EventCapacity,
+        ) -> Result<(), Error> {
+            ensure!(*state == EventState::Created, Error::InvalidState);
+            self.set_attribute(event_id, None, EventAttribute::Capacity, capacity)
+        }
+
+        /// Edits the class of the ticket.
+        ///
+        /// The method fails if the event tickets are already on sale.
+        fn set_ticket_class(
+            &self,
+            event_id: &EventId,
+            state: &EventState,
+            ticket_class: &TicketClass,
+        ) -> Result<(), Error> {
+            ensure!(*state == EventState::Created, Error::InvalidState);
+            self.set_attribute(
+                event_id,
+                None,
+                EventAttribute::TicketClass(DEFAULT_CLASS.into()),
+                ticket_class,
+            )
+        }
+
+        /// Sets the dates of the event.
+        ///
+        /// The method fails if the event is ongoing or finished.
+        fn set_event_dates(
+            &self,
+            event_id: &EventId,
+            state: &EventState,
+            dates: &EventDates,
+        ) -> Result<(), Error> {
+            ensure!(
+                matches!(state, EventState::Created | EventState::Sales),
+                Error::InvalidState
+            );
+            self.set_attribute(event_id, None, EventAttribute::Dates, dates)
+        }
+
+        /// Sets the dates of the event.
+        ///
+        /// The method fails if the event is ongoing or finished.
+        fn set_event_metadata(
+            &self,
+            event_id: &EventId,
+            state: &EventState,
+            metadata: &[u8],
+        ) -> Result<(), Error> {
+            ensure!(
+                matches!(state, EventState::Created | EventState::Sales),
+                Error::InvalidState
+            );
+            <KreivoApi as KreivoAPI<_>>::Listings::set_inventory_metadata(
+                &self.env(),
+                event_id,
+                metadata,
+            )
+            .map_err(|e| e.into())
         }
     }
 }
