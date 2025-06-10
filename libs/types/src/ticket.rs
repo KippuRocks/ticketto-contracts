@@ -14,15 +14,16 @@
 
 use super::*;
 
-#[derive(Encode, Decode, Debug, Clone, PartialEq)]
+#[derive(Encode, Decode, TypeInfo, Debug, Clone, PartialEq)]
 pub struct TicketInfo {
-    owner: AccountId,
-    name: EventName,
-    attendance_policy: crate::AttendancePolicy,
-    attendances: Vec<Timestamp>,
-    restrictions: TicketRestrictions,
+    pub name: EventName,
+    pub owner: [u8; 32],
+    pub attendance_policy: crate::AttendancePolicy,
+    pub attendances: Attendances,
+    pub price: Option<ItemPrice>,
+    pub restrictions: TicketRestrictions,
+    pub pending_transfer: Option<[u8; 32]>,
 }
-
 
 #[derive(Default, Encode, Decode, TypeInfo, Debug, Clone, PartialEq, Eq)]
 pub struct Attendances {

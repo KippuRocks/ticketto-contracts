@@ -158,6 +158,29 @@ pub trait WithAttributes: StaticEnv<EnvAccess = EnvAccess<'static, KreivoApiEnvi
         }
         .map_err(|e| e.into())
     }
+
+    fn clear_attribute(
+        &self,
+        event_id: &EventId,
+        ticket_id: Option<&TicketId>,
+        key: impl Into<TickettoAttribute>,
+    ) -> Result<(), Error> {
+        if let Some(id) = ticket_id {
+            <KreivoApi as KreivoAPI<_>>::Listings::item_clear_attribute(
+                &Self::env(),
+                event_id,
+                id,
+                &Self::key(key),
+            )
+        } else {
+            <KreivoApi as KreivoAPI<_>>::Listings::inventory_clear_attribute::<_, ()>(
+                &Self::env(),
+                event_id,
+                &Self::key(key),
+            )
+        }
+        .map_err(|e| e.into())
+    }
 }
 
 pub trait WithState: WithAttributes {

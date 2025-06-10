@@ -19,7 +19,6 @@ extern crate alloc;
 use codec::{Decode, Encode};
 use scale_info::TypeInfo;
 
-use ink::primitives::AccountId;
 use ink::{env::Environment, prelude::vec::Vec};
 use kreivo_apis::KreivoApiEnvironment;
 pub use virto_common::{
