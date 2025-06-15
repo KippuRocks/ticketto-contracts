@@ -29,6 +29,8 @@ use ticketto_types::{
     DEFAULT_CLASS,
 };
 
+const TICKETTO_ATTR: [u8; 13] = *b"TICKETTO_ATTR";
+
 type Balance = <KreivoApiEnvironment as Environment>::Balance;
 
 /// Since we need to keep the balance each event organiser deposits for covering the costs of
@@ -47,7 +49,10 @@ pub trait WithMeteredBalance:
         event_id: &EventId,
         f: impl FnOnce() -> Result<R, Error>,
     ) -> Result<(R, Balance), Error> {
-        let key_deposit_balance = ("TICKETTO_ATTR", EventAttribute::DepositBalance);
+        let key_deposit_balance = (
+            TICKETTO_ATTR,
+            TickettoAttribute::Event(EventAttribute::DepositBalance),
+        );
 
         let pre_balance = Self::env().balance();
         let transferred_value = Self::env().transferred_value();
@@ -108,7 +113,7 @@ pub trait WithMeteredBalance:
 pub trait WithAttributes: StaticEnv<EnvAccess = EnvAccess<'static, KreivoApiEnvironment>> {
     fn key(attribute: impl Into<TickettoAttribute>) -> impl Encode {
         let attr: TickettoAttribute = attribute.into();
-        (b"TICKETTO_ATTRIBUTE", attr)
+        (TICKETTO_ATTR, attr)
     }
 
     fn get_attribute<V: Encode + Decode>(
@@ -207,14 +212,16 @@ pub trait GetEventInfo: WithAttributes {
         Some(EventInfo {
             organiser: self.get_attribute(event_id, None, EventAttribute::Organiser)?,
             name: self.get_attribute(event_id, None, EventAttribute::Name)?,
-            state: self.get_attribute(event_id, None, EventAttribute::State)?,
+            state: self
+                .get_attribute(event_id, None, EventAttribute::State)
+                .unwrap_or_default(),
             capacity: self.get_attribute(event_id, None, EventAttribute::Capacity)?,
             class: self.get_attribute(
                 event_id,
                 None,
                 EventAttribute::TicketClass(DEFAULT_CLASS.into()),
             )?,
-            dates: self.get_attribute(event_id, None, EventAttribute::Dates)?,
+            dates: self.get_attribute(event_id, None, EventAttribute::Dates),
         })
     }
 }

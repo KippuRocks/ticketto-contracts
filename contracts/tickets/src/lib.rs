@@ -393,8 +393,7 @@ mod ticketto_tickets {
                 None,
                 EventAttribute::NextTicketId,
                 &next_ticket_id.checked_add(1).ok_or(Error::Overflow)?,
-            )
-            .unwrap_or_default();
+            )?;
 
             Ok(next_ticket_id)
         }

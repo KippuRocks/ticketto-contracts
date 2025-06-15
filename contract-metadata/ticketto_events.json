@@ -1,6 +1,6 @@
 {
   "source": {
-    "hash": "0x6e3c9be77fc53c8ebc9f7d75e575031b81b4f72b96528607baae399b82692253",
+    "hash": "0xc2bc31491adf770af17ac11056c113576625bb94667b834387a21212427a9026",
     "language": "ink! 5.1.1",
     "compiler": "rustc 1.86.0-nightly",
     "build_info": {
@@ -1659,8 +1659,8 @@
               },
               {
                 "name": "dates",
-                "type": 30,
-                "typeName": "EventDates"
+                "type": 29,
+                "typeName": "Option<EventDates>"
               }
             ]
           }

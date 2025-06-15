@@ -21,7 +21,7 @@ pub struct EventInfo {
     pub state: EventState,
     pub capacity: EventCapacity,
     pub class: TicketClass,
-    pub dates: EventDates,
+    pub dates: Option<EventDates>,
 }
 
 #[allow(clippy::cast_possible_truncation)]
